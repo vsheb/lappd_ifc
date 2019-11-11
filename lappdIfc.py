@@ -263,7 +263,7 @@ class lappdInterface :
     def CalibrateIDelaySingle(self, nadc, chn):
         self.RegWrite(ADCDEBUGCHAN, nadc*32 + chn*2) 
         for dly in range(0,0x20) :
-            self.RegWrite(ADCDATADELAY + 16*nadc*4 + 4*chn, dly)
+            self.RegWrite(ADCDATADELAY_0 + 16*nadc*4 + 4*chn, dly)
             res1 = self.CheckPattern(nadc, self.TestPattern[0]) 
             res2 = self.CheckPattern(nadc, self.TestPattern[1]) 
             res  = res1 and res2
