@@ -36,7 +36,7 @@ ADCBUFCURADDR   = 0x0380 # current position in ADC buffer
 STATUS          = 0x0388 # reserved, not filled at the moment
 DRSREFCLKRATIO  = 0x0390 # REFCLK ratio
 ADCFRAMEDEBUG   = 0x03A8 # not filled
-ADCDATADELAY_0  = 0x0400 # IDELAY 
+ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 register, i-th channel ADCDATADELAY_0 + i*4) 
 
 ADCDELAYDEBUG   = 0x0500   
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
