@@ -42,7 +42,7 @@ ADCDELAYDEBUG   = 0x0500
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
 NSAMPLEPACKET   = 0x0610 # maximum number of samples in the packet
 DRSVALIDPHASE   = 0x0618 #   
-DRSVALIDDELAY   = 0x0620   
+DRSVALIDDELAY   = 0x0620 # delay drs valid to choose between oversampling samples  
 
 EBDEBUG         = 0x0628 # debug                
 DRSWAITSRIN     = 0x0630 # debug              
