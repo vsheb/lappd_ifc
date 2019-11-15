@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 
+import sys
+import os
 import eevee 
 import time
 import numpy as np
@@ -36,7 +38,7 @@ ADCBUFCURADDR   = 0x0380 # current position in ADC buffer
 STATUS          = 0x0388 # reserved, not filled at the moment
 DRSREFCLKRATIO  = 0x0390 # REFCLK ratio
 ADCFRAMEDEBUG   = 0x03A8 # not filled
-ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 register, i-th channel ADCDATADELAY_0 + i*4) 
+ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 registers, i-th channel ADCDATADELAY_0 + i*4) 
 
 ADCDELAYDEBUG   = 0x0500   
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
@@ -85,8 +87,8 @@ C_MODE_DRS_REVRS_BIT    = 6  # reverse order of Drs stop samples
 class lappdInterface :
     def __init__(self, ip = '10.0.6.193', udpsport = 8989):
         self.xx = 0
-        self.brd = eevee.board('10.0.6.212', udpsport = 7778)
-        # self.brd = eevee.board(ip, udpsport) 
+        # self.brd = eevee.board('10.0.6.212', udpsport = 7778)
+        self.brd = eevee.board(ip, udpsport = udpsport) 
         self.peds = [0]*1024
         self.rmss = [0]*1024
         self.AdcSampleOffset = 12
@@ -95,7 +97,6 @@ class lappdInterface :
     def RegRead(self, addr) :
         if type(addr) != int : addr = int(addr,0)
         val = self.brd.peeknow(addr)
-        #print(hex(val))
         return val
 
     def RegWrite(self, addr, value) :
@@ -107,8 +108,8 @@ class lappdInterface :
 # modify only one bit of the register 
     def RegSetBit(self,addr, bit, bit_val) :
         if bit_val not in [0,1] :
-            print("RegSetBit:: error:: val should be 0 or 1 ")
-            return
+            raise Exception("RegSetBit:: error:: val should be 0 or 1 ", file=sys.stderr)
+
         reg_val = self.brd.peeknow(addr)
         if bit_val == 1 :
             reg_val = reg_val | (1 << bit)
@@ -140,7 +141,8 @@ class lappdInterface :
         self.brd.pokenow(0x2000, 2)
         val = self.brd.peeknow(0x2000 | (nadc << 10) | (reg << 2))
         self.brd.pokenow(0x2000, 0)
-        print(hex(val))
+        print(hex(val), file=sys.stderr)
+        return val
 
 
     #####################################################
@@ -149,8 +151,7 @@ class lappdInterface :
     def AdcSetNchMode(self, nadc = 0, ch_mode = 32):
         # See register 1h in datasheet
         if ch_mode != 32 and ch_mode != 16 :
-            print('error: unsupported mode. Available modes are: 16, 32')
-            return
+            raise Exception('error: unsupported mode. Available modes are: 16, 32')
 
         lvds_mode = 0 << 14 # 1 for 2x mode
         sel_ch2   = 0 << 7
@@ -162,14 +163,13 @@ class lappdInterface :
 
     def AdcSetPatSelInd(self, nadc, en_bit) :
         if en_bit > 1 or en_bit < 0 :
-            print('''error: wrong parameter for PAT_SEL_IND bit.''')
-            return
+            raise Exception('''error: wrong parameter for PAT_SEL_IND bit.''')
         val = en_bit << 8
         
     def AdcSetMsbFirst(self, nadc, en_bit):
         # if en_bit > 1 or en_bit < 0 :
         if en_bit not in [0,1] :
-            print('''error: wrong parameter for MSB first enable.\n 
+            raise Exception('''error: wrong parameter for MSB first enable.\n 
             Should be 1 for MSB first mode or 0 for LSB first mode''');
             return
         val = en_bit << 4
@@ -200,7 +200,6 @@ class lappdInterface :
         }
         if imode in testPatModes.keys() :
             mode = testPatModes[imode]
-            print('mode = ',mode)
             if ch == -1 : # all
                 val = (mode & 7) << 7
                 self.SetAdcReg(nadc, 0x2,val)
@@ -236,7 +235,7 @@ class lappdInterface :
             val = serDataRateModes[rate] << 13
             self.SetAdcReg(nadc, 0x3, val)
         else :
-            print('error: wrong SER_DATA_RATE value')
+            raise Exception('error: wrong SER_DATA_RATE value')
 
     def CalibrateIDelays(self, nadc)  :
         self.AdcSetTestMode(nadc, 'custom')
@@ -250,13 +249,13 @@ class lappdInterface :
                 #print(bin(bitslp))
             itr = itr + 1
             if bitslp == 0 : 
-                print('Calibration OK')
+                print('Calibration OK', file=sys.stderr)
                 self.AdcSetTestMode(nadc, 'normal')
                 return True
             else :
-                print('One more try with bitslip %s' % (bin(bitslp)))
+                print('One more try with bitslip %s' % (bin(bitslp)), file=sys.stderr)
                 self.RegWrite(BITSLIP+nadc*4, bitslp)
-        print('Failed')
+        print('Failed', file=sys.stderr)
         return False
 
 
@@ -268,9 +267,9 @@ class lappdInterface :
             res2 = self.CheckPattern(nadc, self.TestPattern[1]) 
             res  = res1 and res2
             if res :
-                print('Good delay = %d found for channel %d' % (dly, chn))
+                print('Good delay = %d found for channel %d' % (dly, chn), file=sys.stderr)
                 return True
-        print('No delay found for channel %d' % (chn))
+        print('No delay found for channel %d' % (chn), file=sys.stderr)
         return False
 
     def CheckPattern(self, nadc, pattern):
@@ -344,7 +343,7 @@ class lappdInterface :
         DAC_VREF  = 2.5
         #dacCode = VOut*dacDiv*2**DAC_NBITS/dacGain/DAC_VREF
         dacCode = int(0xffff/2.5*VOut)
-        print("dac code: ", hex(dacCode))
+        print("dac code: %s" %( hex(dacCode)), file=sys.stderr)
         return int(dacCode)
 
     # initialize DAC
@@ -354,10 +353,10 @@ class lappdInterface :
     # set output voltage
     def DacSetVout(self, dac_chn, vout):
         if dac_chn < 0 or dac_chn > 7 :
-            print('ERROR:: Wrong DAC channel')
+            raise Exception('ERROR:: Wrong DAC channel')
             return 0
         addr = 0x1000 | ((8 | dac_chn)<<2)
-        print('addr:',addr)
+        print('addr: %s' %(hex(addr), file=sys.stderr)
         val  = self.GetDacCode(vout)
         self.RegWrite(addr, val)
 
@@ -387,8 +386,8 @@ class lappdInterface :
         self.DacSetVout(1,1.0)  # ROFS
         self.DacSetVout(2,1.3)   # OOFS
         self.DacSetVout(3,0.7) # CMOFS
-        self.DacSetVout(4,0.5)
-        self.DacSetVout(5,0.5)
+        self.DacSetVout(4,0.5) #TCAL_N1
+        self.DacSetVout(5,0.5) #TCAL_N2
         
 
     # set all voltages to 0
@@ -415,7 +414,7 @@ class lappdInterface :
 
     def SetDebugChan(self, chan) :
         if chan < 0 or chan > 64 :
-            print('wrong channel number')
+            raise Exception('wrong channel number')
             return False 
         self.RegWrite(ADCDEBUGCHAN,chan)
         return True
@@ -457,13 +456,12 @@ class lappdInterface :
         self.AdcTxTrg()
 
         for iadc in range(0,2) :
-            print("calibrate IDELAYs for ADC #%d"%(iadc))
+            print("calibrate IDELAYs for ADC #%d"%(iadc), file=sys.stderr)
             # self.AdcSetTestMode(iadc, 'custom')
             ret = self.CalibrateIDelays(iadc)
             self.AdcSetTestMode(iadc, 'normal')
         
             if not ret:
-                # print("Initialization failed")
                 raise Exception('ADC calibration failed')
         
         # set DAC voltages
@@ -473,18 +471,18 @@ class lappdInterface :
         self.DrsSetConfigReg()
         # enable DRS-4 transparent mode
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 1)
-        print('DRS4 transparent mode is ON')
+        print('DRS4 transparent mode is ON', file=sys.stderr)
         # set DENABLE
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT, 1)
-        print('DENABLE is ON')
+        print('DENABLE is ON', file=sys.stderr)
 
         time.sleep(0.01)
         pll = self.RegRead(DRSPLLLCK) & 0xff
 
         if pll == 0 : 
-            print('error:: DRS4 PLL failed to lock : %s' % (bin(pll)))
+            print('error:: DRS4 PLL failed to lock : %s' % (bin(pll)), file=sys.stderr)
         else : 
-            print('DRS4 PLL locked')
+            print('DRS4 PLL locked', file=sys.stderr)
 
         # tune SRCLK to ADCCLK phase
         self.RegWrite(0x620,44)
@@ -492,7 +490,7 @@ class lappdInterface :
         # full readout mode
         self.RegWrite(ADCBUFNUMWORDS,1025)
         self.RegWrite(0x610, 512) # number of words in packet
-        print('Full waveform readout mode')
+        print('Full waveform readout mode', file=sys.stderr)
         
         # readout channel 15 (TCA channel)
         self.RegWrite(ADCDEBUGCHAN,15)
@@ -503,7 +501,7 @@ class lappdInterface :
         self.RegWrite(0x670,mask_adc1)
         self.RegWrite(0x674,mask_adc2)
 
-        print("ADC1 mask: %s ADC2 mask: %s" % (bin(mask_adc1), bin(mask_adc2)))
+        print("ADC1 mask: %s ADC2 mask: %s" % (bin(mask_adc1), bin(mask_adc2)), file=sys.stderr)
 
 
         # to switch TCA on : 
