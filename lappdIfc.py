@@ -27,7 +27,7 @@ ADCBUFNUMWORDS  = 0x0328 # number of DRS samples, if <=1024 then ROI mode else F
 ADCDEBUG1       = 0x0330
 ADCBUFDEBUG     = 0x0338
 ADCCLKDELAY     = 0x0340 # IDELAY 
-ADCFRAMEDELAY   = 0x0348 # IDELAY
+ADCFRAMEDELAY_0 = 0x0348 # IDELAY
 BITSLIP         = 0x0350 # manual bitslip ADC2 & ADC1
 ADCWORDSWRITTEN = 0x0358 # obsolete TODO : remove
 ADCDEBUGCHAN    = 0x0360 # channel to be read out via reg interface
@@ -93,6 +93,7 @@ class lappdInterface :
         self.rmss = [0]*1024
         self.AdcSampleOffset = 12
         self.TestPattern = [0xabc, 0x543]
+        self.NCalSamples = 100
         
     def RegRead(self, addr) :
         if type(addr) != int : addr = int(addr,0)
@@ -261,20 +262,61 @@ class lappdInterface :
 
     def CalibrateIDelaySingle(self, nadc, chn):
         self.RegWrite(ADCDEBUGCHAN, nadc*32 + chn*2) 
+        dly_good_first = -1
+        dly_good_last = -1
         for dly in range(0,0x20) :
             self.RegWrite(ADCDATADELAY_0 + 16*nadc*4 + 4*chn, dly)
-            res1 = self.CheckPattern(nadc, self.TestPattern[0]) 
-            res2 = self.CheckPattern(nadc, self.TestPattern[1]) 
-            res  = res1 and res2
-            if res :
-                print('Good delay = %d found for channel %d' % (dly, chn), file=sys.stderr)
-                return True
-        print('No delay found for channel %d' % (chn), file=sys.stderr)
-        return False
+            res = self.CheckPattern(nadc, self.TestPattern[0]) 
+            # res2 = self.CheckPattern(nadc, self.TestPattern[1]) 
+            
+            if res : 
+                if dly_good_first == -1 : dly_good_first = dly
+                dly_good_last = dly
+        if dly_good_first != -1 :
+            dly_best = int((dly_good_first+dly_good_last)/2)
+            print("Channel %d : dly_good_first = %d dly_good_last = %d best = %d" 
+                % (chn, dly_good_first, dly_good_last, dly_best), file=sys.stderr)
+            self.RegWrite(ADCDATADELAY_0 + 16*nadc*4 + 4*chn, dly_best)
+            return True
+        else:
+            print('No delay found for channel %d' % (chn), file=sys.stderr)
+            return False
+
+    def CalibrateIDelayFrame(self, nadc):
+        dly_good_first = -1
+        dly_good_last  = -1
+        dly_seqs = []
+        i = 0
+        dly_prev_bad = False
+        for dly in range(0,0x20) :
+            self.RegWrite(ADCFRAMEDELAY_0+nadc*4, dly)
+            time.sleep(0.01)
+            sta = self.RegRead(STATUS) & (1 << nadc)
+            if sta != 0 :
+                if dly_prev_bad : i = i + 1
+                if len(dly_seqs) < i+1 :
+                    dly_seqs.append([])
+                dly_seqs[i].append(dly)
+                dly_prev_bad = False
+            else :
+                if len(dly_seqs) != 0 : dly_prev_bad = True
+        print(dly_seqs, file=sys.stderr)
+        if len(dly_seqs) != 0:
+            dly_lens = [len(s) for s in dly_seqs]
+            imax = dly_lens.index(max(dly_lens))
+            print(imax)
+            dly_best = (dly_seqs[imax][0] + dly_seqs[imax][-1])/2
+            print("ADC %d frame delay : dly_good_first = %d dly_good_last = %d best = %d" 
+                 % (nadc, dly_seqs[imax][0], dly_seqs[imax][-1], dly_best), file=sys.stderr)
+            return int(dly_best)
+
+        else:
+            raise Exception('No delay found for frame signal for ADC#%d'%(nadc))
+        
 
     def CheckPattern(self, nadc, pattern):
         self.AdcSetTestPat(nadc, pattern)
-        for i in range(0,1000) :
+        for i in range(0,self.NCalSamples) :
             val = self.RegRead(ADCDEBUG1)
             if val != pattern :
                 return False
@@ -455,8 +497,19 @@ class lappdInterface :
         self.AdcInitCmd(1) # ADC2
         self.AdcTxTrg()
 
+        frame_dly = [0,0]
         for iadc in range(0,2) :
-            print("calibrate IDELAYs for ADC #%d"%(iadc), file=sys.stderr)
+            print("calibrate frame IDELAY for ADC #%d"%(iadc), file=sys.stderr)
+            frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
+
+        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
+
+        for iadc in range(0,2) :
+            self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
+
+        for iadc in range(0,2) :
+
+            print("calibrate data IDELAYs for ADC #%d"%(iadc), file=sys.stderr)
             # self.AdcSetTestMode(iadc, 'custom')
             ret = self.CalibrateIDelays(iadc)
             self.AdcSetTestMode(iadc, 'normal')
