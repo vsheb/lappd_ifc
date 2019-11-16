@@ -356,7 +356,7 @@ class lappdInterface :
             raise Exception('ERROR:: Wrong DAC channel')
             return 0
         addr = 0x1000 | ((8 | dac_chn)<<2)
-        print('addr: %s' %(hex(addr), file=sys.stderr)
+        print('addr: %s' %(hex(addr)), file=sys.stderr)
         val  = self.GetDacCode(vout)
         self.RegWrite(addr, val)
 
