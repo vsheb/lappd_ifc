@@ -7,11 +7,13 @@ import time
 import numpy as np
 
 # temporarily here
-VERSION         = 0x0000
+SW_VERSION      = 0x0000
+FW_VERSION      = 0x0004
 DEVICEDNA_L     = 0x0008
 DEVICEDNA_H     = 0x0010
 EFUSEVAL        = 0x0018
 SCRATCH         = 0x0020
+SYS_FREQ        = 0x0030
 SRCMAC_LOW      = 0x0100   
 SRCMAC_HIGH     = 0x0108   
 SRCIP           = 0x0110   
@@ -52,7 +54,7 @@ DRSWAITADDR     = 0x0638 # debug
 DRSWAITSTART    = 0x0640 # debug         
 DRSWAITINIT     = 0x0648 # debug         
 DRSSTOPSAMPLE_0 = 0x0650 # stop sample for chan 0 (for ith channel + 4*i)
-ADCCHANMASK     = 0x0670 # mask of ADC channels to be sent 
+ADCCHANMASK_0   = 0x0670 # mask of ADC channels to be sent 
 NUDPPORTS       = 0x0678 # number of UDP ports for multiple ports mode 
 
 
@@ -94,6 +96,21 @@ class lappdInterface :
         self.AdcSampleOffset = 12
         self.TestPattern = [0xabc, 0x543]
         self.NCalSamples = 100
+        self.drsrefclk = 51
+        self.mask_adc1 = 1 << 15;
+        self.mask_adc2 = 1 << 23;
+
+        # dict for DAC voltages 'name' : [OUTN, VOLTS] 
+        self.DACOUTS = {
+            'BIAS'     : 0, 
+            'ROFS'     : 1,
+            'OOFS'     : 2,
+            'CMOFS'    : 3,
+            'TCAL_N1'  : 4,
+            'TCAL_N2'  : 5,
+            'TCAL_N3'  : 6,
+            'TCAL_N4'  : 7
+        }
         
     def RegRead(self, addr) :
         if type(addr) != int : addr = int(addr,0)
@@ -106,7 +123,7 @@ class lappdInterface :
         self.brd.pokenow(addr, value)
         return 0
 
-# modify only one bit of the register 
+    # modify only one bit of the register 
     def RegSetBit(self,addr, bit, bit_val) :
         if bit_val not in [0,1] :
             raise Exception("RegSetBit:: error:: val should be 0 or 1 ", file=sys.stderr)
@@ -210,9 +227,9 @@ class lappdInterface :
                 # val = (mode & 7) << 9
                 # self.SetAdcReg(0x15,val)
         else :
-            print('error: wrong test pattern mode. Alailable modes are:')
+            print('error: wrong test pattern mode. Alailable modes are:', file=sys.stderr)
             for imode in testPatModes.keys() :
-                print(imode)
+                print(imode, file=sys.stderr)
 
     def AdcSetTestPat(self, nadc, pattern = 0) :
         ptrn = pattern & 0xfff;
@@ -238,7 +255,25 @@ class lappdInterface :
         else :
             raise Exception('error: wrong SER_DATA_RATE value')
 
-    def CalibrateIDelays(self, nadc)  :
+    def CalibrateIDelaysFrameAll(self) :
+        frame_dly = [0,0]
+        for iadc in range(0,2) :
+            print("calibrate frame IDELAY for ADC #%d"%(iadc), file=sys.stderr)
+            frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
+        for iadc in range(0,2) :
+            self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
+        # reset bitslips for ISERDESEs on data lines
+        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
+
+    def CalibrateIDelaysDataAll(self) :
+        for iadc in range(0,2) :
+            print("calibrate data IDELAYs for ADC #%d"%(iadc), file=sys.stderr)
+            ret = self.CalibrateIDelaysData(iadc)
+            self.AdcSetTestMode(iadc, 'normal')
+            if not ret:
+                raise Exception('ADC calibration failed')
+
+    def CalibrateIDelaysData(self, nadc)  :
         self.AdcSetTestMode(nadc, 'custom')
         itr = 0
         while itr < 10:
@@ -304,7 +339,7 @@ class lappdInterface :
         if len(dly_seqs) != 0:
             dly_lens = [len(s) for s in dly_seqs]
             imax = dly_lens.index(max(dly_lens))
-            print(imax)
+            print(imax, file=sys.stderr)
             dly_best = (dly_seqs[imax][0] + dly_seqs[imax][-1])/2
             print("ADC %d frame delay : dly_good_first = %d dly_good_last = %d best = %d" 
                  % (nadc, dly_seqs[imax][0], dly_seqs[imax][-1], dly_best), file=sys.stderr)
@@ -383,9 +418,7 @@ class lappdInterface :
         dacDiv    = 1   # default
         dacGain   = 1   # 1 by default (?)
         DAC_VREF  = 2.5
-        #dacCode = VOut*dacDiv*2**DAC_NBITS/dacGain/DAC_VREF
         dacCode = int(0xffff/2.5*VOut)
-        print("dac code: %s" %( hex(dacCode)), file=sys.stderr)
         return int(dacCode)
 
     # initialize DAC
@@ -394,36 +427,29 @@ class lappdInterface :
 
     # set output voltage
     def DacSetVout(self, dac_chn, vout):
-        if dac_chn < 0 or dac_chn > 7 :
+
+        if type(dac_chn) == int :
+            dac_chn_i = dac_chn
+        elif type(dac_chn) == str :
+            dac_chn_i = self.DACOUTS[dac_chn]
+        else :
+            raise Exception('dac_chn should be integer or string')
+
+        if dac_chn_i < 0 or dac_chn_i > 7 :
             raise Exception('ERROR:: Wrong DAC channel')
-            return 0
-        addr = 0x1000 | ((8 | dac_chn)<<2)
-        print('addr: %s' %(hex(addr)), file=sys.stderr)
+
+        addr = 0x1000 | ((8 | dac_chn_i)<<2)
         val  = self.GetDacCode(vout)
+        print('DAC out: %d addr: %s voltage: %f code: %s' % (dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
         self.RegWrite(addr, val)
 
     # set all voltages to operating values
     def DacSetAll(self):
-        # OUT0 -> BIAS  (DRS)
-        # OUT1 -> ROFS  (DRS) Read offset voltage. Used to shift the contents of the sampling capacitors into the linear range of the output buffers
-        # OUT2 -> OOFS  (DRS) Output offset voltage. Adjusts U-  while U+ is in 0.8-1.8V range
-        # OUT3 -> CMOFS (Amps) 
-        # OUT4 -> TCAL_N1 (DRS 1-4)
-        # OUT5 -> TCAL_N2 (DRS 5-8)
-        # OUT6 -> TCAL_N3 
-        # OUT7 -> TCAL_N4
-        # REF  <- REF25
 
         # initialize DAC first to be sure that we are not going to burn anything
         self.DacIni()
 
         # set output voltages TODO: don't hardcode values here
-        # self.DacSetVout(0,0.7)   # BIAS
-        # self.DacSetVout(1,1.57)  # ROFS
-        # self.DacSetVout(2,1.3)   # OOFS
-        # self.DacSetVout(3,0.8) # CMOFS
-        #self.DacSetVout(4,0.3)
-
         self.DacSetVout(0,0.7)   # BIAS
         self.DacSetVout(1,1.0)  # ROFS
         self.DacSetVout(2,1.3)   # OOFS
@@ -468,7 +494,7 @@ class lappdInterface :
         bufs = [[0]*5 for i in range(1024)]
 
         for i in range(nev) :
-            print(i)
+            print(i, file=sys.stderr)
             self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
             v = self.ReadMem(0,4200,15)
@@ -476,7 +502,7 @@ class lappdInterface :
             for isample in range(0,1024) :
                 bufs[isample][i] = v[self.AdcSampleOffset + 4*isample]
         
-        print(bufs)
+        print(bufs, file=sys.stderr)
 
         for isa in range(0,1024):
             buf = bufs[isa]
@@ -486,41 +512,35 @@ class lappdInterface :
             self.peds[isa] = mean
             self.rmss[isa] = rms
         #print(self.peds)
-        print(self.rmss)
+        print(self.rmss, file=sys.stderr)
         return 
 
 
-    def Initialize(self):
+    def Initialize(self, doCal = True):
+        fwver = self.RegRead(FW_VERSION) & 0xff
+        
+        print('FW version : %d' % (fwver), file=sys.stderr)
+
         #initialize ADC
         self.AdcReset()
         self.AdcInitCmd(0) # ADC1
         self.AdcInitCmd(1) # ADC2
         self.AdcTxTrg()
 
-        frame_dly = [0,0]
-        for iadc in range(0,2) :
-            print("calibrate frame IDELAY for ADC #%d"%(iadc), file=sys.stderr)
-            frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
-
         self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
 
-        for iadc in range(0,2) :
-            self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
-
-        for iadc in range(0,2) :
-
-            print("calibrate data IDELAYs for ADC #%d"%(iadc), file=sys.stderr)
-            # self.AdcSetTestMode(iadc, 'custom')
-            ret = self.CalibrateIDelays(iadc)
-            self.AdcSetTestMode(iadc, 'normal')
-        
-            if not ret:
-                raise Exception('ADC calibration failed')
-        
         # set DAC voltages
         self.DacIni()
         self.DacSetAll()
 
+
+        if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
+        if doCal : self.CalibrateIDelaysAll()
+
+        # self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
+        # print("DRSREFCLKRATIO : %d" % (self.drsrefclk), file=sys.stderr)
+
+        # initialize DRS-4 chips 
         self.DrsSetConfigReg()
         # enable DRS-4 transparent mode
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 1)
@@ -532,29 +552,28 @@ class lappdInterface :
         time.sleep(0.01)
         pll = self.RegRead(DRSPLLLCK) & 0xff
 
-        if pll == 0 : 
+        if pll != 0xff : 
             print('error:: DRS4 PLL failed to lock : %s' % (bin(pll)), file=sys.stderr)
         else : 
             print('DRS4 PLL locked', file=sys.stderr)
 
         # tune SRCLK to ADCCLK phase
-        self.RegWrite(0x620,44)
+        if fwver >= 100 :
+            self.RegWrite(DRSVALIDDELAY, 28) # for the first sample extended
+            self.RegWrite(DRSWAITADDR, 12) 
+        else :
+            # remove this once new version is stable
+            self.RegWrite(DRSVALIDDELAY,44)
+            self.RegWrite(NSAMPLEPACKET, 512) # number of words in packet
 
         # full readout mode
         self.RegWrite(ADCBUFNUMWORDS,1025)
-        self.RegWrite(0x610, 512) # number of words in packet
         print('Full waveform readout mode', file=sys.stderr)
         
-        # readout channel 15 (TCA channel)
-        self.RegWrite(ADCDEBUGCHAN,15)
+        self.RegWrite(ADCCHANMASK_0  , self.mask_adc1)
+        self.RegWrite(ADCCHANMASK_0+4, self.mask_adc2)
 
-        mask_adc1 = 1 << 15;
-        mask_adc2 = 1 << 23;
-
-        self.RegWrite(0x670,mask_adc1)
-        self.RegWrite(0x674,mask_adc2)
-
-        print("ADC1 mask: %s ADC2 mask: %s" % (bin(mask_adc1), bin(mask_adc2)), file=sys.stderr)
+        print("ADC1 mask: %s ADC2 mask: %s" % (bin(self.mask_adc1), bin(self.mask_adc2)), file=sys.stderr)
 
 
         # to switch TCA on : 
