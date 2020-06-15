@@ -93,11 +93,11 @@ C_MODE_ZERSUP_EN_BIT    = 9  # enable zero supression
 # ADDR_DRSCFG_OFFSET = 0x4000
 # ADDR_PEDMEM_OFFSET = 0x5000
 
-ADDR_DAC_OFFSET    = (1 << 17) # DAC
-ADDR_ADCSPI_OFFSET = (2 << 17) # ADC SPI control
-ADDR_ADCBUF_OFFSET = (3 << 17) # ADC buffer reg interface
-ADDR_DRSCFG_OFFSET = (4 << 17) # DRS4 registers
-ADDR_PEDMEM_OFFSET = (5 << 17) # Pedestals memory
+ADDR_DAC_OFFSET    = (1 << 18) # DAC
+ADDR_ADCSPI_OFFSET = (2 << 18) # ADC SPI control
+ADDR_ADCBUF_OFFSET = (3 << 18) # ADC buffer reg interface
+ADDR_DRSCFG_OFFSET = (4 << 18) # DRS4 registers
+ADDR_PEDMEM_OFFSET = (8 << 18) # Pedestals memory
 
 
 class lappdInterface :
@@ -475,6 +475,7 @@ class lappdInterface :
     # set all voltages to 0
     def DacClearAll(self) :
         for i in range(8) : self.DacSetVout(i,0)
+
         
 
     #####################################################
@@ -491,7 +492,7 @@ class lappdInterface :
     def DrsTimeCalibOscOn(self):
         self.RegSetBit(MODE, C_MODE_TCA_ENA_BIT, 1)
     
-    def DrsTimeCalibOscOff():
+    def DrsTimeCalibOscOff(self):
         self.RegSetBit(MODE, C_MODE_TCA_ENA_BIT, 0)
 
     def SetDebugChan(self, chan) :
