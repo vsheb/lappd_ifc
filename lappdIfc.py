@@ -56,6 +56,8 @@ DRSWAITINIT     = 0x0648 # debug
 DRSSTOPSAMPLE_0 = 0x0650 # stop sample for chan 0 (for ith channel + 4*i)
 ADCCHANMASK_0   = 0x0670 # mask of ADC channels to be sent 
 NUDPPORTS       = 0x0678 # number of UDP ports for multiple ports mode 
+ZEROTHRESH_0    = 0x0700 # thresholds for zero suppression
+EXTTRGCNT       = 0x0800 # counter for external triggers
 
 
 
@@ -170,9 +172,9 @@ class lappdInterface :
         if nadc < 0 or nadc > 1 :
             raise Exception('Wrong ADC chip number : %d. Should be 0 or 1' %(nadc))
         if type(reg) != int : reg = int(reg,0)
-        self.brd.pokenow(ADDR_ADCSPI_OFFSET, 2)
+        self.brd.pokenow(ADDR_ADCSPI_OFFSET | (nadc << 10), 2)
         val = self.brd.peeknow(ADDR_ADCSPI_OFFSET | (nadc << 10) | (reg << 2))
-        self.brd.pokenow(ADDR_ADCSPI_OFFSET, 0)
+        self.brd.pokenow(ADDR_ADCSPI_OFFSET | (nadc << 10), 0)
         print(hex(val), file=sys.stderr)
         return val
 
@@ -535,6 +537,12 @@ class lappdInterface :
         fwver = self.RegRead(FW_VERSION) & 0xff
         
         print('FW version : %d' % (fwver), file=sys.stderr)
+
+        # reset logic
+        self.RegWrite(CMD, 1 << C_CMD_RESET_BIT);
+
+        # switch external triggering off
+        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT,0);
 
         #initialize ADC
         self.AdcReset()
