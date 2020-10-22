@@ -217,10 +217,6 @@ class lappdInterface :
         val = 1 << C_CMD_ADCRESET_BIT
         self.RegWrite(CMD, val)
 
-    def AdcBufStart(self): # obsolete FIXME : remove
-        val = 1 << C_CMD_ADCSTART_BIT
-        self.RegWrite(CMD, val)
-
     def AdcSetTestMode(self, nadc, imode, ch = -1):
         testPatModes = {
             'normal'   : 0, # normal ADC operation
