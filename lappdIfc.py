@@ -26,7 +26,7 @@ NBIC_PORTS      = 0x0218
 
 CMD             = 0x0320 # asserted for 1 clk cycle see description of bits below
 ADCBUFNUMWORDS  = 0x0328 # number of DRS samples, if <=1024 then ROI mode else FULL
-ADCDEBUG1       = 0x0330
+ADCDEBUG1       = 0x0330 # continuously registered ADC data for the channel number ADCDEBUGCHAN 
 ADCBUFDEBUG     = 0x0338
 ADCCLKDELAY     = 0x0340 # IDELAY 
 ADCFRAMEDELAY_0 = 0x0348 # IDELAY
@@ -39,10 +39,10 @@ DRSPLLLCK       = 0x0378 # PLL Lock states
 ADCBUFCURADDR   = 0x0380 # current position in ADC buffer
 STATUS          = 0x0388 # reserved, not filled at the moment
 DRSREFCLKRATIO  = 0x0390 # REFCLK ratio
-ADCFRAMEDEBUG   = 0x03A8 # not filled
+ADCFRAMEDEBUG   = 0x03A8 # not used anymore
 ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 registers, i-th channel ADCDATADELAY_0 + i*4) 
 
-ADCDELAYDEBUG   = 0x0500   
+ADCDELAYDEBUG   = 0x0500 # readback IDELAY delay values
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
 NSAMPLEPACKET   = 0x0610 # maximum number of samples in the packet
 DRSVALIDPHASE   = 0x0618 #   
@@ -406,9 +406,18 @@ class lappdInterface :
             # FIXME use multiple peek followed by transfer
             # addr = ADDR_ADCBUF_OFFSET + ((start_addr + i)<<2)
             addr = ADDR_ADCBUF_OFFSET 
-            v = self.RegRead(addr)
+            rv = self.RegRead(addr)
+            v  = rv >> 4
+            f  = rv & 0xf
             # convert two's compliment to signed int
-            if v & (1<<11) != 0 : v = v - 0xfff - 1
+            if f == 0 : 
+              if v & (1<<11) != 0 : v = v - 0xfff - 1
+            else : 
+              if f == 1 : 
+                v = -9999
+              else : 
+                v = 9999
+              
             ret_val.append(v)
             if fname != "" : filo.write("%d %d\n" % (i, v))
         #self.AdcBufStart()
