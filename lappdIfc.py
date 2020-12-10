@@ -73,6 +73,7 @@ C_CMD_ADCRESET_BIT  = 4 # reset ADCs
 C_CMD_ADCBTSLP_BIT  = 5 # obsolete
 C_CMD_READREQ_BIT   = 6 # start DRS readout sequence
 C_CMD_RUNRESET_BIT  = 7 # reset nun number and event building state machine
+C_CMD_ADCRDRESET_BIT = 8 # reset nun number and event building state machine
 
 ##################################
 # bits of MODE register
@@ -274,8 +275,6 @@ class lappdInterface :
             frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
         for iadc in range(0,2) :
             self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
-        # reset bitslips for ISERDESEs on data lines
-        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
 
     def CalibrateIDelaysDataAll(self) :
         for iadc in range(0,2) :
@@ -337,7 +336,7 @@ class lappdInterface :
         dly_prev_bad = False
         for dly in range(0,0x20) :
             self.RegWrite(ADCFRAMEDELAY_0+nadc*4, dly)
-            time.sleep(0.01)
+            time.sleep(0.001)
             sta = self.RegRead(STATUS) & (1 << nadc)
             if sta != 0 :
                 if dly_prev_bad : i = i + 1
@@ -544,10 +543,15 @@ class lappdInterface :
         print('FW version : %d' % (fwver), file=sys.stderr)
 
         # reset logic
+        self.RegSetBit(MODE,11,1)
+        time.sleep(0.2)
+        self.RegSetBit(MODE,11,0)
+        time.sleep(0.2)
         self.RegWrite(CMD, 1 << C_CMD_RESET_BIT);
 
         # switch external triggering off
-        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT,0);
+        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT, 0);
+        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
 
         #initialize ADC
         self.AdcReset()
@@ -555,14 +559,15 @@ class lappdInterface :
         self.AdcInitCmd(1) # ADC2
         self.AdcTxTrg()
 
-        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
 
         # set DAC voltages
         self.DacIni()
         self.DacSetAll()
 
-
+        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
         if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
+        # reset bitslips for ISERDESEs on data lines
+        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
         if doCal : self.CalibrateIDelaysDataAll()
 
         self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
@@ -571,8 +576,8 @@ class lappdInterface :
         # initialize DRS-4 chips 
         self.DrsSetConfigReg()
         # enable DRS-4 transparent mode
-        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 1)
-        print('DRS4 transparent mode is ON', file=sys.stderr)
+        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
+        print('DRS4 transparent mode is OFF', file=sys.stderr)
         # set DENABLE
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT, 1)
         print('DENABLE is ON', file=sys.stderr)
@@ -586,6 +591,10 @@ class lappdInterface :
             print('DRS4 PLL locked', file=sys.stderr)
 
         # tune SRCLK to ADCCLK phase
+        if fwver >= 105 :
+            self.RegWrite(DRSVALIDDELAY, 65) # for the first sample extended
+            self.RegWrite(DRSADCPHASE. 1)
+            self.RegWrite(DRSWAITADDR, 12) 
         if fwver >= 100 :
             self.RegWrite(DRSVALIDDELAY, 36) # for the first sample extended
             self.RegWrite(DRSWAITADDR, 12) 
