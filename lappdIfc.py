@@ -593,7 +593,7 @@ class lappdInterface :
         # tune SRCLK to ADCCLK phase
         if fwver >= 105 :
             self.RegWrite(DRSVALIDDELAY, 65) # for the first sample extended
-            self.RegWrite(DRSADCPHASE. 1)
+            self.RegWrite(DRSADCPHASE, 1)
             self.RegWrite(DRSWAITADDR, 12) 
         if fwver >= 100 :
             self.RegWrite(DRSVALIDDELAY, 36) # for the first sample extended
