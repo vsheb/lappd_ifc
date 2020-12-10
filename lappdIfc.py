@@ -110,7 +110,7 @@ class lappdInterface :
         self.brd = eevee.board(ip, udpsport = udpsport) 
         self.peds = [0]*1024
         self.rmss = [0]*1024
-        self.AdcSampleOffset = 12
+        self.AdcSampleOffset = 0
         self.TestPattern = [0xabc, 0x543]
         self.NCalSamples = 100
         self.drsrefclk = 51
@@ -442,11 +442,15 @@ class lappdInterface :
         return int(dacCode)
 
     # initialize DAC
-    def DacIni(self):
-        self.RegWrite(ADDR_DAC_OFFSET | (0x4<<2),0x1ff)
+    def DacIni(self, i = 0):
+      if not 0 <= i <= 1 :
+        print('error :: wrong DAC number')
+        return False
+      dac_num_addr = (i << 4)
+      self.RegWrite(ADDR_DAC_OFFSET | ((0x4 | dac_num_addr)<<2),0x1ff)
 
     # set output voltage
-    def DacSetVout(self, dac_chn, vout):
+    def DacSetVout(self, dac_num, dac_chn, vout):
 
         if type(dac_chn) == int :
             dac_chn_i = dac_chn
@@ -458,9 +462,15 @@ class lappdInterface :
         if dac_chn_i < 0 or dac_chn_i > 7 :
             raise Exception('ERROR:: Wrong DAC channel')
 
-        addr = ADDR_DAC_OFFSET | ((8 | dac_chn_i)<<2)
+        if not 0 <= dac_num <= 1 :
+            print('error :: wrong DAC number')
+            return False
+
+        dac_num_addr = (dac_num << 4)
+
+        addr = ADDR_DAC_OFFSET | ((8 | dac_chn_i | dac_num_addr)<<2)
         val  = self.GetDacCode(vout)
-        print('DAC out: %d addr: %s voltage: %f code: %s' % (dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
+        print('#%d DAC out: %d addr: %s voltage: %f code: %s' % (dac_num, dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
         self.RegWrite(addr, val)
 
     # set all voltages to operating values
@@ -470,12 +480,14 @@ class lappdInterface :
         self.DacIni()
 
         # set output voltages TODO: don't hardcode values here
-        self.DacSetVout(0,0.7)   # BIAS
-        self.DacSetVout(1,1.0)  # ROFS
-        self.DacSetVout(2,1.3)   # OOFS
-        self.DacSetVout(3,0.7) # CMOFS
-        self.DacSetVout(4,0.5) #TCAL_N1
-        self.DacSetVout(5,0.5) #TCAL_N2
+        for i in range(2) : 
+            self.DacSetVout(i, 0,0.7)   # BIAS
+            self.DacSetVout(i, 1,1.55)  # ROFS
+            self.DacSetVout(i, 2,0.8)   # OOFS
+            self.DacSetVout(i, 3,0.8) # CMOFS
+            self.DacSetVout(i, 4,0.8) #TCAL_N1
+            self.DacSetVout(i, 5,0.8) #TCAL_N2
+
         
 
     # set all voltages to 0
@@ -508,9 +520,9 @@ class lappdInterface :
         self.RegWrite(ADCDEBUGCHAN,chan)
         return True
 
-    def MeasurePeds(self, nev = 5):
+    def MeasurePeds(self, ch = 0, nev = 5):
+        self.RegWrite(ADCBUFNUMWORDS,1025)
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT,1)
-        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT,1)
 
         bufs = [[0]*5 for i in range(1024)]
 
@@ -518,10 +530,10 @@ class lappdInterface :
             print(i, file=sys.stderr)
             self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
-            v = self.ReadMem(0,4200,15)
+            v = self.ReadMem(0,1024,ch)
             # print(v)
             for isample in range(0,1024) :
-                bufs[isample][i] = v[self.AdcSampleOffset + 4*isample]
+                bufs[isample][i] = v[self.AdcSampleOffset + isample]
         
         print(bufs, file=sys.stderr)
 
