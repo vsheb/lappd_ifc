@@ -110,6 +110,8 @@ class lappdInterface :
         self.brd = eevee.board(ip, udpsport = udpsport) 
         self.peds = [0]*1024
         self.rmss = [0]*1024
+        self.peds_roi = [0]*1024
+        self.rmss_roi = [0]*1024
         self.AdcSampleOffset = 0
         self.TestPattern = [0xabc, 0x543]
         self.NCalSamples = 100
@@ -428,11 +430,14 @@ class lappdInterface :
         for isa in range(0,1024):
             wf[isa] = raw[self.AdcSampleOffset + 4*isa] - int(self.peds[isa])
         return wf
-    #####################################################
-    # DAC configuration
-    #####################################################
+
+##########################################################
+#     DAC configuration
+##########################################################
     
+    #####################################################
     # convert voltage to DAC code
+    #####################################################
     def GetDacCode(self, VOut = 0):
         DAC_NBITS = 12  # DAC60508
         dacDiv    = 1   # default
@@ -441,7 +446,9 @@ class lappdInterface :
         dacCode = int(0xffff/2.5*VOut)
         return int(dacCode)
 
+    #####################################################
     # initialize DAC
+    #####################################################
     def DacIni(self, i = 0):
       if not 0 <= i <= 1 :
         print('error :: wrong DAC number')
@@ -449,7 +456,9 @@ class lappdInterface :
       dac_num_addr = (i << 4)
       self.RegWrite(ADDR_DAC_OFFSET | ((0x4 | dac_num_addr)<<2),0x1ff)
 
+    #####################################################
     # set output voltage
+    #####################################################
     def DacSetVout(self, dac_num, dac_chn, vout):
 
         if type(dac_chn) == int :
@@ -473,7 +482,9 @@ class lappdInterface :
         print('#%d DAC out: %d addr: %s voltage: %f code: %s' % (dac_num, dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
         self.RegWrite(addr, val)
 
+    #####################################################
     # set all voltages to operating values
+    #####################################################
     def DacSetAll(self):
 
         # initialize DAC first to be sure that we are not going to burn anything
@@ -490,29 +501,45 @@ class lappdInterface :
 
         
 
-    # set all voltages to 0
+    #####################################################
+    # set all DAC output voltages to 0
+    #####################################################
     def DacClearAll(self) :
         for i in range(8) : self.DacSetVout(i,0)
 
         
-
     #####################################################
     # LAPPD configuration
     #####################################################
 
+    #########################################################
+    # Set DRS-4 REFCLK ratio to the sys clk
+    #########################################################
     def SetDrsRefClkRatio(self, ratio):
         self.RegWrite(DRSREFCLKRATIO,ratio)
     
+    #########################################################
+    # Get the MODE register
+    #########################################################
     def GetMode(self):
         v = self.RegRead(MODE)
         return v
     
+    #########################################################
+    # Switch the TCAL oscillator OFF
+    #########################################################
     def DrsTimeCalibOscOn(self):
         self.RegSetBit(MODE, C_MODE_TCA_ENA_BIT, 1)
     
+    #########################################################
+    # Switch the TCAL oscillator ON
+    #########################################################
     def DrsTimeCalibOscOff(self):
         self.RegSetBit(MODE, C_MODE_TCA_ENA_BIT, 0)
 
+    #########################################################
+    # Set the ADC channel latched into the debug register
+    #########################################################
     def SetDebugChan(self, chan) :
         if chan < 0 or chan > 64 :
             raise Exception('wrong channel number')
@@ -520,11 +547,16 @@ class lappdInterface :
         self.RegWrite(ADCDEBUGCHAN,chan)
         return True
 
+
+    #########################################################
+    # Measure pedestals in full readout mode
+    #########################################################
     def MeasurePeds(self, ch = 0, nev = 5):
         self.RegWrite(ADCBUFNUMWORDS,1025)
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT,1)
+        self.RegSetBit(MODE, C_MODE_PEDSUB_EN_BIT, 0)
 
-        bufs = [[0]*5 for i in range(1024)]
+        bufs = [[0]*nev for i in range(1024)]
 
         for i in range(nev) :
             print(i, file=sys.stderr)
@@ -546,9 +578,91 @@ class lappdInterface :
             self.rmss[isa] = rms
         #print(self.peds)
         print(self.rmss, file=sys.stderr)
-        return 
 
 
+    #########################################################
+    # Measure pedestals with ROI mode enabled
+    #########################################################
+    def MeasurePedsROI(self, ch = 0, nev = 5):
+        self.RegWrite(ADCBUFNUMWORDS,1024)
+        self.RegSetBit(MODE, C_MODE_PEDSUB_EN_BIT, 0)
+
+        bufs = [[0]*nev for i in range(1024)]
+
+        idrs = int(ch/8)
+
+        for i in range(nev) :
+            print(i, file=sys.stderr)
+            self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
+            time.sleep(0.001)
+            v0   = self.ReadMem(0,1024,ch)
+            stop = self.RegRead(DRSSTOPSAMPLE_0 + 4*idrs)
+            v = v0[1023-stop+1 :] + v0[:1023-stop+1]
+            for isample in range(0,1024) :
+                bufs[isample][i] = v[isample]
+        
+        for isa in range(0,1024):
+            buf = bufs[isa]
+            mean = np.around(np.mean(buf),1)
+            bufx = [(a - mean) for a in bufs[isa]]
+            rms = np.around(np.sqrt(np.mean(np.square(bufx))),1)
+            self.peds_roi[isa] = mean
+            self.rmss_roi[isa] = rms
+    #########################################################
+
+    #####################################################
+    # Upload pedestal values into the pedestal memory
+    #####################################################
+    def UploadPeds(self, ch = 0, peds = [1024]*0) :
+
+        for i in range(1024) :
+          p = int(peds[i])
+          if not -2048 < p < 2047 : 
+            print("error :: wrong ped value ",p)
+            return False
+          if p < 0 : p = 0xfff + p + 1
+          self.RegWrite(ADDR_PEDMEM_OFFSET + (ch<<12) + i*4, p)
+
+    def DumpEvents(self, nev = 5, ch = 0, fname = 'evdump.txt', reorder = True):
+        idrs = int(ch/8)
+        vm = [1024]
+
+        f = open(fname, 'w')
+        f.write('stop/D:a[1024]/D\n')
+        for i in range(nev) :
+            self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
+            time.sleep(0.001)
+            v = self.ReadMem(0,1024,ch)
+            stop = self.RegRead(DRSSTOPSAMPLE_0 + 4*idrs)
+            if reorder :
+              vm[stop:] = v[:1024-stop]
+              vm[0:stop] = v[1024-stop:]
+              vstr = str(stop) + ' ' + ' '.join(str(x) for x in vm) + '\n'
+
+            else : 
+              vstr = str(stop) + ' ' + ' '.join(str(x) for x in v) + '\n'
+              
+            f.write(vstr)
+            print(i, end = ' ', flush = True)
+        print('\n')
+        f.close()
+
+    #####################################################
+    # Dump deps to the file 
+    #####################################################
+    def DumpPeds(self,ch = 0,nev = 100) :
+        self.MeasurePeds(ch,nev)
+        self.MeasurePedsROI(ch,nev)
+        f = open('peds.txt','w')
+        f.write('cap : p_f/D : rms_f/D : p_r/D : rms_r/D \n')
+        for i in range(1024) :
+            f.write('%d %0.2f %0.2f %0.2f %0.2f \n' % (i,self.peds[i],self.rmss[i],self.peds_roi[i],self.rmss_roi[i]))
+        f.close()
+
+
+    #####################################################
+    # Initialize the board
+    #####################################################
     def Initialize(self, doCal = True):
         fwver = self.RegRead(FW_VERSION) & 0xff
         
@@ -607,7 +721,7 @@ class lappdInterface :
             self.RegWrite(DRSVALIDDELAY, 65) # for the first sample extended
             self.RegWrite(DRSADCPHASE, 1)
             self.RegWrite(DRSWAITADDR, 12) 
-        if fwver >= 100 :
+        elif fwver >= 100 :
             self.RegWrite(DRSVALIDDELAY, 36) # for the first sample extended
             self.RegWrite(DRSWAITADDR, 12) 
         else :
