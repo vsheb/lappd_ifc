@@ -523,6 +523,29 @@ class lappdInterface :
     #########################################################
     def GetMode(self):
         v = self.RegRead(MODE)
+        fwver = self.RegRead(FW_VERSION) 
+        nwords = self.RegRead(ADCBUFNUMWORDS)
+        transpModeStr = 'ON' if v & (1 << C_MODE_DRS_TRANS_BIT)   > 0 else 'OFF'
+        denableStr    = 'ON' if v & (1 << C_MODE_DRS_DENABLE_BIT) > 0 else 'OFF'
+        TCAEnableStr  = 'ON' if v & (1 << C_MODE_TCA_ENA_BIT)     > 0 else 'OFF'
+        extTrgStr     = 'ON' if v & (1 << C_MODE_EXTTRG_EN_BIT)   > 0 else 'OFF'
+        clkinTrgStr   = 'ON' if v & (1 << C_MODE_CLKIN_TRG_BIT)   > 0 else 'OFF'
+        pedSubStr     = 'ON' if v & (1 << C_MODE_PEDSUB_EN_BIT)   > 0 else 'OFF'
+        zeroSupStr    = 'ON' if v & (1 << C_MODE_ZERSUP_EN_BIT)   > 0 else 'OFF'
+        drsReadoutStr = 'FULL' if nwords == 1025 else 'ROI'
+        maskADC1      = self.RegRead(ADCCHANMASK_0)
+        maskADC2      = self.RegRead(ADCCHANMASK_0+4)
+        extTrgCnt     = self.RegRead(EXTTRGCNT)
+
+        print('FW_VERSION :', fwver)
+        print('DRS4 transparent mode:', transpModeStr, ' DENABLE:', denableStr)
+        print('time calibration osc :', TCAEnableStr, ' EXT trigger:', extTrgStr)
+        print('CLKIN trigger:', clkinTrgStr, ' pedestal subtraction:', pedSubStr)
+        print('zero supression:', zeroSupStr)
+        print('ADC1 mask :',bin(maskADC1), ' ADC2 mask:', maskADC2)
+        print('DRS N_Samples: %d(%s)'%(nwords,drsReadoutStr))
+        print('Ext triggers counter : ', extTrgCnt)
+
         return v
     
     #########################################################
@@ -559,16 +582,13 @@ class lappdInterface :
         bufs = [[0]*nev for i in range(1024)]
 
         for i in range(nev) :
-            print(i, file=sys.stderr)
+            print(i, end = ' ', flush = True, file=sys.stderr)
             self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
             v = self.ReadMem(0,1024,ch)
-            # print(v)
             for isample in range(0,1024) :
                 bufs[isample][i] = v[self.AdcSampleOffset + isample]
         
-        print(bufs, file=sys.stderr)
-
         for isa in range(0,1024):
             buf = bufs[isa]
             mean = np.around(np.mean(buf),1)
@@ -576,8 +596,9 @@ class lappdInterface :
             rms = np.around(np.sqrt(np.mean(np.square(bufx))),1)
             self.peds[isa] = mean
             self.rmss[isa] = rms
-        #print(self.peds)
-        print(self.rmss, file=sys.stderr)
+        print('\n', file=sys.stderr)
+        # print(self.rmss, file=sys.stderr)
+        return self.peds
 
 
     #########################################################
@@ -592,7 +613,7 @@ class lappdInterface :
         idrs = int(ch/8)
 
         for i in range(nev) :
-            print(i, file=sys.stderr)
+            print(i, end = ' ', flush = True, file=sys.stderr)
             self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
             v0   = self.ReadMem(0,1024,ch)
@@ -608,6 +629,8 @@ class lappdInterface :
             rms = np.around(np.sqrt(np.mean(np.square(bufx))),1)
             self.peds_roi[isa] = mean
             self.rmss_roi[isa] = rms
+        print('\n', file=sys.stderr)
+        return self.peds_roi
     #########################################################
 
     #####################################################
@@ -618,11 +641,26 @@ class lappdInterface :
         for i in range(1024) :
           p = int(peds[i])
           if not -2048 < p < 2047 : 
-            print("error :: wrong ped value ",p)
+            print("error :: wrong ped value ",p, file=sys.stderr)
             return False
           if p < 0 : p = 0xfff + p + 1
           self.RegWrite(ADDR_PEDMEM_OFFSET + (ch<<12) + i*4, p)
 
+    #####################################################
+    # Calibrate pedestals and upload theem to the memory
+    #####################################################
+    def CalibratePedsAll(self, nev = 10):
+      for ch in range(64):
+        print('measuring peds for channel ', ch, file=sys.stderr)
+        peds = self.MeasurePedsROI(ch,nev)
+        print('uploading peds for channel ', ch, file=sys.stderr)
+        self.UploadPeds(ch,peds)
+      print('finished',file=sys.stderr)
+
+
+    #####################################################
+    # Dump event data
+    #####################################################
     def DumpEvents(self, nev = 5, ch = 0, fname = 'evdump.txt', reorder = True):
         idrs = int(ch/8)
         vm = [1024]
@@ -643,8 +681,8 @@ class lappdInterface :
               vstr = str(stop) + ' ' + ' '.join(str(x) for x in v) + '\n'
               
             f.write(vstr)
-            print(i, end = ' ', flush = True)
-        print('\n')
+            print(i, end = ' ', flush = True, file=sys.stderr )
+        print('\n',file=sys.stderr)
         f.close()
 
     #####################################################
