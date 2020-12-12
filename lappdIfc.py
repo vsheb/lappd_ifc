@@ -636,15 +636,30 @@ class lappdInterface :
     #####################################################
     # Upload pedestal values into the pedestal memory
     #####################################################
-    def UploadPeds(self, ch = 0, peds = [1024]*0) :
+    def UploadPeds(self, ch = 0, peds = [0]*1024) :
 
         for i in range(1024) :
-          p = int(peds[i])
-          if not -2048 < p < 2047 : 
-            print("error :: wrong ped value ",p, file=sys.stderr)
-            return False
-          if p < 0 : p = 0xfff + p + 1
-          self.RegWrite(ADDR_PEDMEM_OFFSET + (ch<<12) + i*4, p)
+            p = int(peds[i])
+            if not -2048 < p < 2047 : 
+                print("error :: wrong ped value ",p, file=sys.stderr)
+                return False
+            if p < 0 : p = 0xfff + p + 1
+            self.RegWrite(ADDR_PEDMEM_OFFSET + (ch<<12) + i*4, p)
+
+    #####################################################
+    # Read pedestals from a memory 
+    #####################################################
+    def ReadPeds(self, ch = 0) :
+        if not 0 <= ch < 64 :
+          print('error : wrong channel number')
+          return [None]
+        peds = []
+        for i in range(1024) :
+            v = self.RegRead(ADDR_PEDMEM_OFFSET + (ch<<12) + i*4)
+            if v & (1<<11) != 0 : v = v - 0xfff - 1
+            peds.append(v)
+        return peds
+
 
     #####################################################
     # Calibrate pedestals and upload theem to the memory
@@ -663,7 +678,7 @@ class lappdInterface :
     #####################################################
     def DumpEvents(self, nev = 5, ch = 0, fname = 'evdump.txt', reorder = True):
         idrs = int(ch/8)
-        vm = [1024]
+        vm = [0]*1024
 
         f = open(fname, 'w')
         f.write('stop/D:a[1024]/D\n')
