@@ -113,11 +113,14 @@ class lappdInterface :
         self.peds_roi = [0]*1024
         self.rmss_roi = [0]*1024
         self.AdcSampleOffset = 0
-        self.TestPattern = [0xabc, 0x543]
+        self.TestPatterns = [0xabc, 0x543]
         self.NCalSamples = 100
         self.drsrefclk = 51
         self.mask_adc1 = 1 << 15;
         self.mask_adc2 = 1 << 23;
+        self.frame_dly_def = [7,7]
+        self.data_dly_def  = [7]*32
+
 
         # dict for DAC voltages 'name' : [OUTN, VOLTS] 
         self.DACOUTS = {
@@ -139,7 +142,7 @@ class lappdInterface :
     def RegWrite(self, addr, value) :
         if type(addr)  != int : addr  = int(addr,0)
         if type(value) != int : value = int(value,0)
-        self.brd.pokenow(addr, value)
+        self.brd.pokenow(addr, value, readback = False)
         return 0
 
     # modify only one bit of the register 
@@ -167,7 +170,7 @@ class lappdInterface :
             raise Exception('Wrong ADC chip number : %d. Should be 0 or 1' %(nadc))
 
         # bit 10 in micaroblase addr space - select adc chip : 0 -- ADC-1, 1-- ADC-2
-        self.brd.pokenow(ADDR_ADCSPI_OFFSET | (nadc << 10) | (reg << 2), val)
+        self.brd.pokenow(ADDR_ADCSPI_OFFSET | (nadc << 10) | (reg << 2), val, readback = False)
     
     def GetAdcReg(self, nadc, reg):
         if reg < 0 or reg > 0xff :
@@ -270,13 +273,19 @@ class lappdInterface :
         else :
             raise Exception('error: wrong SER_DATA_RATE value')
 
+    def SetIDelayFrameAll(self, frame_dly = []) : 
+      if len(frame_dly) != 2 : 
+        raise Exception('Wrong length of frame_dly list ')
+      for iadc in range(0,2) :
+          self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
+
+
     def CalibrateIDelaysFrameAll(self) :
         frame_dly = [0,0]
         for iadc in range(0,2) :
             print("calibrate frame IDELAY for ADC #%d"%(iadc), file=sys.stderr)
             frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
-        for iadc in range(0,2) :
-            self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
+        self.SetIDelayFrameAll(frame_dly)
 
     def CalibrateIDelaysDataAll(self) :
         for iadc in range(0,2) :
@@ -308,14 +317,22 @@ class lappdInterface :
         return False
 
 
+    def SetIDelayDataAll(self, data_dly = []) :
+        if len(data_dly) != 32 : 
+            raise Exception('Wrong length of the data_dly list')
+
+        for i in range(32):
+            self.RegWrite(ADCDATADELAY_0 + 4*i, data_dly[i])
+
+
+
     def CalibrateIDelaySingle(self, nadc, chn):
         self.RegWrite(ADCDEBUGCHAN, nadc*32 + chn*2) 
         dly_good_first = -1
         dly_good_last = -1
         for dly in range(0,0x20) :
             self.RegWrite(ADCDATADELAY_0 + 16*nadc*4 + 4*chn, dly)
-            res = self.CheckPattern(nadc, self.TestPattern[0]) 
-            # res2 = self.CheckPattern(nadc, self.TestPattern[1]) 
+            res = self.CheckPattern(nadc, self.TestPatterns[0]) 
             
             if res : 
                 if dly_good_first == -1 : dly_good_first = dly
@@ -338,7 +355,7 @@ class lappdInterface :
         dly_prev_bad = False
         for dly in range(0,0x20) :
             self.RegWrite(ADCFRAMEDELAY_0+nadc*4, dly)
-            time.sleep(0.001)
+            # time.sleep(0.001)
             sta = self.RegRead(STATUS) & (1 << nadc)
             if sta != 0 :
                 if dly_prev_bad : i = i + 1
@@ -362,9 +379,32 @@ class lappdInterface :
             raise Exception('No delay found for frame signal for ADC#%d'%(nadc))
         
 
-    def CheckPattern(self, nadc, pattern):
-        self.AdcSetTestPat(nadc, pattern)
-        for i in range(0,self.NCalSamples) :
+    def CheckPatternAll(self) : 
+        for iadc in range(2) : 
+            self.AdcSetTestMode(iadc, 'custom')
+
+        for tpt in self.TestPatterns :
+            self.AdcSetTestPat(0, tpt)
+            self.AdcSetTestPat(1, tpt)
+            for chn in range(64) :
+                self.RegWrite(ADCDEBUGCHAN,chn)
+                res = self.CheckPattern(pattern = tpt, n_samples = 10)
+                if not res : 
+                  print('Bad ADC delay for chn = ', chn, ' pattern = ', tpt)
+                  return False
+
+        for iadc in range(2) : 
+            self.AdcSetTestMode(iadc, 'normal')
+
+        return True
+
+      
+
+    def CheckPattern(self, nadc = -1, pattern = 0, n_samples = 0):
+        if nadc >=0 and nadc < 2 :
+            self.AdcSetTestPat(nadc, pattern)
+        if n_samples == 0 : n_samples = self.NCalSamples
+        for i in range(0, n_samples) :
             val = self.RegRead(ADCDEBUG1)
             if val != pattern :
                 return False
@@ -717,6 +757,9 @@ class lappdInterface :
     # Initialize the board
     #####################################################
     def Initialize(self, doCal = True):
+        
+        t_start = time.time()
+        
         fwver = self.RegRead(FW_VERSION) & 0xff
         
         print('FW version : %d' % (fwver), file=sys.stderr)
@@ -743,11 +786,19 @@ class lappdInterface :
         self.DacIni()
         self.DacSetAll()
 
-        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
-        if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
-        # reset bitslips for ISERDESEs on data lines
-        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
-        if doCal : self.CalibrateIDelaysDataAll()
+        self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
+
+        if doCal : 
+          if fwver >= 100 : self.CalibrateIDelaysFrameAll()
+          # reset bitslips for ISERDESEs on data lines
+          if doCal : self.CalibrateIDelaysDataAll()
+        else : 
+          self.SetIDelayFrameAll(self.frame_dly_def)
+          self.SetIDelayDataAll(self.data_dly_def)
+          if self.CheckPatternAll() : 
+            print("ADC default delays OK", file=sys.stderr)
+          else :
+            print("Error : ADC default delays are BAD", file=sys.stderr)
 
         self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
         # print("DRSREFCLKRATIO : %d" % (self.drsrefclk), file=sys.stderr)
@@ -791,6 +842,10 @@ class lappdInterface :
         self.RegWrite(ADCCHANMASK_0+4, self.mask_adc2)
 
         print("ADC1 mask: %s ADC2 mask: %s" % (bin(self.mask_adc1), bin(self.mask_adc2)), file=sys.stderr)
+
+        t_stop = time.time()
+
+        print('Initialization time : ', t_stop-t_start, file=sys.stderr)
 
 
         # to switch TCA on : 
