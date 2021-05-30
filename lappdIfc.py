@@ -104,10 +104,14 @@ ADDR_PEDMEM_OFFSET = (8 << 18) # Pedestals memory
 
 
 class lappdInterface :
-    def __init__(self, ip = '10.0.6.193', udpsport = 8989):
+    def __init__(self, ip = '10.0.6.193', udpsport = None):
         self.xx = 0
         # self.brd = eevee.board('10.0.6.212', udpsport = 7778)
-        self.brd = eevee.board(ip, udpsport = udpsport) 
+        if isinstance(udpsport, int):
+            self.brd = eevee.board(ip, udpsport = udpsport)
+        else:
+            self.brd = eevee.board(ip)
+
         self.peds = [0]*1024
         self.rmss = [0]*1024
         self.peds_roi = [0]*1024
@@ -486,6 +490,13 @@ class lappdInterface :
         dacCode = int(0xffff/2.5*VOut)
         return int(dacCode)
 
+    def GetDacVoltage(self, dacCode = 0):
+        DAC_NBITS = 12
+        dacDiv = 1
+        dacGain = 1
+        DAC_VREF = 2.5
+        return (dacCode >> 4)*DAC_VREF/0xfff
+    
     #####################################################
     # initialize DAC
     #####################################################
@@ -522,6 +533,33 @@ class lappdInterface :
         print('#%d DAC out: %d addr: %s voltage: %f code: %s' % (dac_num, dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
         self.RegWrite(addr, val)
 
+    def DacGetVout(self, dac_num, dac_chn):
+
+        if type(dac_chn) == int :
+            dac_chn_i = dac_chn
+        elif type(dac_chn) == str :
+            dac_chn_i = self.DACOUTS[dac_chn]
+        else :
+            raise Exception('dac_chn should be integer or string')
+
+        if dac_chn_i < 0 or dac_chn_i > 7 :
+            raise Exception('ERROR:: Wrong DAC channel')
+
+        if not 0 <= dac_num <= 1 :
+            print('error :: wrong DAC number')
+            return False
+
+        dac_num_addr = (dac_num << 4)
+
+        addr = ADDR_DAC_OFFSET | ((8 | dac_chn_i | dac_num_addr)<<2)
+
+        # Stale dac codes are annoying
+        for zeta in range(3):
+            daccode = self.RegRead(addr)
+            
+        # print("DAC code: ", daccode)
+        return self.GetDacVoltage(daccode)
+
     #####################################################
     # set all voltages to operating values
     #####################################################
@@ -534,7 +572,7 @@ class lappdInterface :
         for i in range(2) : 
             self.DacSetVout(i, 0,0.7)   # BIAS
             self.DacSetVout(i, 1,1.55)  # ROFS
-            self.DacSetVout(i, 2,0.8)   # OOFS
+            self.DacSetVout(i, 2,1.15)   # OOFS
             self.DacSetVout(i, 3,0.8) # CMOFS
             self.DacSetVout(i, 4,0.8) #TCAL_N1
             self.DacSetVout(i, 5,0.8) #TCAL_N2
@@ -582,7 +620,7 @@ class lappdInterface :
         print('time calibration osc :', TCAEnableStr, ' EXT trigger:', extTrgStr)
         print('CLKIN trigger:', clkinTrgStr, ' pedestal subtraction:', pedSubStr)
         print('zero supression:', zeroSupStr)
-        print('ADC1 mask :',bin(maskADC1), ' ADC2 mask:', maskADC2)
+        print('ADC1 mask :',bin(maskADC1), ' ADC2 mask:', bin(maskADC2))
         print('DRS N_Samples: %d(%s)'%(nwords,drsReadoutStr))
         print('Ext triggers counter : ', extTrgCnt)
 
@@ -783,9 +821,14 @@ class lappdInterface :
 
 
         # set DAC voltages
-        self.DacIni()
+        # self.DacIni()
+        # KC 5/29/21 - DacSetAll() already calls DacIni()...
+        #
         self.DacSetAll()
 
+        # KC 5/29/21 - Add some sleep here, to give values some time to come up
+        time.sleep(0.2)
+        
         self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
 
         if doCal : 
