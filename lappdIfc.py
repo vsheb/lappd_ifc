@@ -88,6 +88,10 @@ C_MODE_DRS_REVRS_BIT    = 6  # reverse order of Drs stop samples
 C_MODE_CLKIN_TRG_BIT    = 7  # use CLKIN for the trigger input
 C_MODE_PEDSUB_EN_BIT    = 8  # enable pedestal subtraction
 C_MODE_ZERSUP_EN_BIT    = 9  # enable zero supression
+C_MODE_ADC_PDN_F_BIT    = 10 # ADC fast power down
+C_MODE_ADC_PDN_G_BIT    = 11 # ADC global power down
+C_MODE_RFSWITCH_BIT     = 13 # RF switch control 
+
 
 # Old mapping
 # ADDR_DAC_OFFSET = 0x1000
@@ -352,8 +356,6 @@ class lappdInterface :
             return False
 
     def CalibrateIDelayFrame(self, nadc):
-        dly_good_first = -1
-        dly_good_last  = -1
         dly_seqs = []
         i = 0
         dly_prev_bad = False
@@ -437,7 +439,7 @@ class lappdInterface :
             
     def ReadMem(self, start_addr, num_words, chan = -1, fname = "") :
         ret_val = []
-        self.AdcBufStop();
+        self.AdcBufStop()
         
         if chan != -1 :
             if not self.SetDebugChan(chan) : return -1
@@ -583,7 +585,8 @@ class lappdInterface :
     # set all DAC output voltages to 0
     #####################################################
     def DacClearAll(self) :
-        for i in range(8) : self.DacSetVout(i,0)
+        for idac in range(2) :
+            for ich in range(8) : self.DacSetVout(idac, ich, 0)
 
         
     #####################################################
