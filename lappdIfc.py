@@ -44,6 +44,7 @@ ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 registers, i-th channel
 
 ADCDELAYDEBUG   = 0x0500 # readback IDELAY delay values
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
+DRSIDLEMODE     = 0x0608 # 0x0 - standby, 0x1 - readall, 0x2 - transparent, 0x3 - rdshift
 NSAMPLEPACKET   = 0x0610 # maximum number of samples in the packet
 DRSVALIDPHASE   = 0x0618 #   
 DRSVALIDDELAY   = 0x0620 # delay drs valid to choose between oversampling samples  
@@ -124,8 +125,8 @@ class lappdInterface :
         self.TestPatterns = [0xabc, 0x543]
         self.NCalSamples = 100
         self.drsrefclk = 51
-        self.mask_adc1 = 1 << 15;
-        self.mask_adc2 = 1 << 23;
+        self.mask_adc1 = 1 << 15
+        self.mask_adc2 = 1 << 23
         self.frame_dly_def = [7,7]
         self.data_dly_def  = [7]*32
 
@@ -209,17 +210,11 @@ class lappdInterface :
         val = sel_ch0 | sel_ch1 | sel_ch2 
         self.SetAdcReg(nadc, 1,val)
 
-    def AdcSetPatSelInd(self, nadc, en_bit) :
-        if en_bit > 1 or en_bit < 0 :
-            raise Exception('''error: wrong parameter for PAT_SEL_IND bit.''')
-        val = en_bit << 8
-        
     def AdcSetMsbFirst(self, nadc, en_bit):
         # if en_bit > 1 or en_bit < 0 :
         if en_bit not in [0,1] :
             raise Exception('''error: wrong parameter for MSB first enable.\n 
-            Should be 1 for MSB first mode or 0 for LSB first mode''');
-            return
+            Should be 1 for MSB first mode or 0 for LSB first mode''')
         val = en_bit << 4
         self.SetAdcReg(nadc, 4, val)
 
@@ -258,8 +253,8 @@ class lappdInterface :
                 print(imode, file=sys.stderr)
 
     def AdcSetTestPat(self, nadc, pattern = 0) :
-        ptrn = pattern & 0xfff;
-        val  = pattern << 4;
+        ptrn = pattern & 0xfff
+        val  = ptrn << 4
         self.SetAdcReg(nadc, 5, val)
 
     def AdcInitCmd(self, nadc):
@@ -410,7 +405,7 @@ class lappdInterface :
         if nadc >=0 and nadc < 2 :
             self.AdcSetTestPat(nadc, pattern)
         if n_samples == 0 : n_samples = self.NCalSamples
-        for i in range(0, n_samples) :
+        for _ in range(n_samples) :
             val = self.RegRead(ADCDEBUG1)
             if val != pattern :
                 return False
@@ -419,8 +414,11 @@ class lappdInterface :
     #####################################################
     # DRS control
     #####################################################
-    def DrsTransperentMode(self, mode_on):
-        self.RegSetBit(MODE,C_MODE_DRS_TRANS_BIT,mode_on)
+    def DrsTransperentModeOn(self):
+        self.RegWrite(DRSIDLEMODE, 0x2)
+
+    def DrsTransperentModeOff(self):
+        self.RegWrite(DRSIDLEMODE, 0x1)
 
     def DrsSetConfigReg(self):
         self.RegWrite(ADDR_DRSCFG_OFFSET,0b11111111)
@@ -485,29 +483,43 @@ class lappdInterface :
     # convert voltage to DAC code
     #####################################################
     def GetDacCode(self, VOut = 0):
-        DAC_NBITS = 12  # DAC60508
-        dacDiv    = 1   # default
-        dacGain   = 1   # 1 by default (?)
-        DAC_VREF  = 2.5
+        # DAC_NBITS = 12  # DAC60508
+        # dacDiv    = 1   # default
+        # dacGain   = 1   # 1 by default (?)
+        # DAC_VREF  = 2.5
         dacCode = int(0xffff/2.5*VOut)
         return int(dacCode)
 
     def GetDacVoltage(self, dacCode = 0):
-        DAC_NBITS = 12
-        dacDiv = 1
-        dacGain = 1
+        # DAC_NBITS = 12
+        # dacDiv = 1
+        # dacGain = 1
         DAC_VREF = 2.5
         return (dacCode >> 4)*DAC_VREF/0xfff
+
+    def DacOutPwrDown(self, dac_num = 0):
+        if not (0 <= dac_num <= 1) :
+            print('error :: wrong DAC number')
+            return False
+        dac_num_addr = (dac_num << 4)
+        self.RegWrite(ADDR_DAC_OFFSET | ((0x3 | dac_num_addr)<<2),0x1ff)
+
+
     
     #####################################################
     # initialize DAC
     #####################################################
-    def DacIni(self, i = 0):
-      if not 0 <= i <= 1 :
-        print('error :: wrong DAC number')
-        return False
-      dac_num_addr = (i << 4)
-      self.RegWrite(ADDR_DAC_OFFSET | ((0x4 | dac_num_addr)<<2),0x1ff)
+    def DacIni(self):
+      # set CONFIG register
+      for i in range(2):
+        dac_num_addr = (i << 4)
+        self.RegWrite(ADDR_DAC_OFFSET | ((0x3 | dac_num_addr)<<2),0x0)
+        time.sleep(0.5)
+      # set GAIN register
+      for i in range(2):
+        dac_num_addr = (i << 4)
+        self.RegWrite(ADDR_DAC_OFFSET | ((0x4 | dac_num_addr)<<2),0x1ff)
+        time.sleep(0.5)
 
     #####################################################
     # set output voltage
@@ -567,12 +579,10 @@ class lappdInterface :
     #####################################################
     def DacSetAll(self):
 
-        # initialize DAC first to be sure that we are not going to burn anything
-        self.DacIni()
-
         # set output voltages TODO: don't hardcode values here
         for i in range(2) : 
             self.DacSetVout(i, 0,0.7)   # BIAS
+            # self.DacSetVout(i, 0,0.7)   # BIAS
             self.DacSetVout(i, 1,1.55)  # ROFS
             self.DacSetVout(i, 2,1.15)   # OOFS
             self.DacSetVout(i, 3,0.8) # CMOFS
@@ -645,9 +655,8 @@ class lappdInterface :
     # Set the ADC channel latched into the debug register
     #########################################################
     def SetDebugChan(self, chan) :
-        if chan < 0 or chan > 64 :
+        if (chan < 0) or (chan > 64) :
             raise Exception('wrong channel number')
-            return False 
         self.RegWrite(ADCDEBUGCHAN,chan)
         return True
 
@@ -793,7 +802,6 @@ class lappdInterface :
             f.write('%d %0.2f %0.2f %0.2f %0.2f \n' % (i,self.peds[i],self.rmss[i],self.peds_roi[i],self.rmss_roi[i]))
         f.close()
 
-
     #####################################################
     # Initialize the board
     #####################################################
@@ -805,15 +813,17 @@ class lappdInterface :
         
         print('FW version : %d' % (fwver), file=sys.stderr)
 
+        self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT, 0)
+
         # reset logic
-        self.RegSetBit(MODE,11,1)
-        time.sleep(0.2)
-        self.RegSetBit(MODE,11,0)
-        time.sleep(0.2)
-        self.RegWrite(CMD, 1 << C_CMD_RESET_BIT);
+        # self.RegSetBit(MODE,11,1)
+        # time.sleep(0.2)
+        # self.RegSetBit(MODE,11,0)
+        # time.sleep(0.2)
+        self.RegWrite(CMD, 1 << C_CMD_RESET_BIT)
 
         # switch external triggering off
-        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT, 0);
+        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT, 0)
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
 
         #initialize ADC
@@ -823,10 +833,7 @@ class lappdInterface :
         self.AdcTxTrg()
 
 
-        # set DAC voltages
-        # self.DacIni()
-        # KC 5/29/21 - DacSetAll() already calls DacIni()...
-        #
+        self.DacIni()
         self.DacSetAll()
 
         # KC 5/29/21 - Add some sleep here, to give values some time to come up
@@ -851,15 +858,19 @@ class lappdInterface :
 
         # initialize DRS-4 chips 
         self.DrsSetConfigReg()
+        time.sleep(0.1)
         # enable DRS-4 transparent mode
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
         print('DRS4 transparent mode is OFF', file=sys.stderr)
+        self.RegWrite(DRSIDLEMODE,0x1)
+        time.sleep(0.01)
         # set DENABLE
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT, 1)
         print('DENABLE is ON', file=sys.stderr)
 
         time.sleep(0.01)
         pll = self.RegRead(DRSPLLLCK) & 0xff
+
 
         if pll != 0xff : 
             print('error:: DRS4 PLL failed to lock : %s' % (bin(pll)), file=sys.stderr)
