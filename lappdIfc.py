@@ -468,6 +468,26 @@ class lappdInterface :
         #self.AdcBufStart()
         return ret_val 
 
+    def ReadMemHex(self, start_addr, num_words, chan = -1, fname = "") :
+        ret_val = []
+        self.AdcBufStop()
+        
+        if chan != -1 :
+            if not self.SetDebugChan(chan) : return -1
+
+        if fname != "" : filo = open(fname,"w+")
+
+        addr = ADDR_ADCBUF_OFFSET + (1<<2)
+        v = self.RegRead(addr)
+        
+        for i in range(0,num_words):
+            addr = ADDR_ADCBUF_OFFSET 
+            v = self.RegRead(addr)
+            ret_val.append(v)
+            if fname != "" : filo.write("%d %d\n" % (i, v))
+        #self.AdcBufStart()
+        return ret_val 
+
     def ReadWf(self) :
         raw = self.ReadMem(0, 4200, 15)
         wf  = [0]*1024
@@ -773,7 +793,7 @@ class lappdInterface :
         f = open(fname, 'w')
         f.write('stop/D:a[1024]/D\n')
         for i in range(nev) :
-            self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
+            if nev > 1 : self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
             v = self.ReadMem(0,1024,ch)
             stop = self.RegRead(DRSSTOPSAMPLE_0 + 4*idrs)
@@ -859,6 +879,10 @@ class lappdInterface :
         # initialize DRS-4 chips 
         self.DrsSetConfigReg()
         time.sleep(0.1)
+        self.DrsSetWriteReg()
+        print('DRS4 write register set for 8 independent channels', file=sys.stderr)
+        time.sleep(0.1)
+
         # enable DRS-4 transparent mode
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
         print('DRS4 transparent mode is OFF', file=sys.stderr)
