@@ -823,6 +823,12 @@ class lappdInterface :
         f.close()
 
     #####################################################
+    # Set the same zero suppression threshold for every channel
+    #####################################################
+    def SetZeroSupThreshold(self, thresh = 0):
+      for i in range(64): self.RegWrite(ZEROTHRESH_0+i*4, thresh)
+
+    #####################################################
     # Initialize the board
     #####################################################
     def Initialize(self, doCal = True):
@@ -902,7 +908,15 @@ class lappdInterface :
             print('DRS4 PLL locked', file=sys.stderr)
 
         # tune SRCLK to ADCCLK phase
-        if fwver >= 105 :
+        if fwver > 109 :
+            self.RegWrite(DRSADCPHASE, 2)    
+            self.RegWrite(DRSVALIDPHASE,1)   
+        elif fwver > 108 :
+            self.RegWrite(DRSADCPHASE, 3)    
+            self.RegWrite(DRSWAITADDR, 22)   
+            self.RegWrite(DRSVALIDDELAY, 60) 
+            self.RegWrite(DRSVALIDPHASE,1)   
+        elif fwver >= 105 :
             self.RegWrite(DRSVALIDDELAY, 65) # for the first sample extended
             self.RegWrite(DRSADCPHASE, 1)
             self.RegWrite(DRSWAITADDR, 12) 
