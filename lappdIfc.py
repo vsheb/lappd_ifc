@@ -421,10 +421,14 @@ class lappdInterface :
         self.RegWrite(DRSIDLEMODE, 0x1)
 
     def DrsSetConfigReg(self):
-        self.RegWrite(ADDR_DRSCFG_OFFSET,0b11111111)
+        self.RegWrite(ADDR_DRSCFG_OFFSET,0xff)
 
     def DrsSetWriteReg(self):
         self.RegWrite(ADDR_DRSCFG_OFFSET + 4,0xff)
+
+    def DrsSetWriteConfReg(self):
+        self.RegWrite(ADDR_DRSCFG_OFFSET + 4*2,0xff)
+
 
     #####################################################
     # ADC buffer control
@@ -888,6 +892,9 @@ class lappdInterface :
         self.DrsSetWriteReg()
         print('DRS4 write register set for 8 independent channels', file=sys.stderr)
         time.sleep(0.1)
+        self.DrsSetWriteConfReg()
+        print('DRS4 write config register set to 0xff', file=sys.stderr)
+        time.sleep(0.1)
 
         # enable DRS-4 transparent mode
         self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
@@ -909,7 +916,7 @@ class lappdInterface :
 
         # tune SRCLK to ADCCLK phase
         if fwver > 109 :
-            self.RegWrite(DRSADCPHASE, 2)    
+            self.RegWrite(DRSADCPHASE, 1)    
             self.RegWrite(DRSVALIDPHASE,1)   
         elif fwver > 108 :
             self.RegWrite(DRSADCPHASE, 3)    
