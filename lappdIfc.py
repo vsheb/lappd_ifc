@@ -59,6 +59,11 @@ ADCCHANMASK_0   = 0x0670 # mask of ADC channels to be sent
 NUDPPORTS       = 0x0678 # number of UDP ports for multiple ports mode 
 ZEROTHRESH_0    = 0x0700 # thresholds for zero suppression
 EXTTRGCNT       = 0x0800 # counter for external triggers
+ZERSUPMASKAND_0 = 0x0860 # all channels in this register must pass zero suppression in order to trigger a readout
+                         # it is a base address for an array of 2 register - one per ADC
+ZERSUPMASKOR_0  = 0x0868 # any channels in this register must pass zero suppression in order to trigger a readout
+                         # it is a base address for an array of 2 register - one per ADC
+ZERSUPSAMP      = 0x0878 # number of samples (-1) over threshold to pass zero suppression
 
 
 
@@ -92,6 +97,10 @@ C_MODE_ZERSUP_EN_BIT    = 9  # enable zero supression
 C_MODE_ADC_PDN_F_BIT    = 10 # ADC fast power down
 C_MODE_ADC_PDN_G_BIT    = 11 # ADC global power down
 C_MODE_RFSWITCH_BIT     = 13 # RF switch control 
+C_MODE_ZERSUP_MODE_BIT  = 14 # mode of zero suppression: 0 -- OR, 1 -- AND
+C_MODE_ZERSUP_NEG_BIT   = 15 # negative polarity for zero suppresion
+C_MODE_SENDNULLEVT_BIT  = 16 # allow for sending the null events
+
 
 
 # Old mapping
@@ -858,8 +867,10 @@ class lappdInterface :
 
         #initialize ADC
         self.AdcReset()
+        time.sleep(0.01)
         self.AdcInitCmd(0) # ADC1
         self.AdcInitCmd(1) # ADC2
+        time.sleep(0.01)
         self.AdcTxTrg()
 
 
