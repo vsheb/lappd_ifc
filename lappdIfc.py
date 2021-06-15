@@ -134,8 +134,7 @@ class lappdInterface :
         self.TestPatterns = [0xabc, 0x543]
         self.NCalSamples = 100
         self.drsrefclk = 51
-        self.mask_adc1 = 1 << 15
-        self.mask_adc2 = 1 << 23
+        self.mask_adc = [0xffffffff,0xffffffff]
         self.frame_dly_def = [7,7]
         self.data_dly_def  = [7]*32
 
@@ -951,10 +950,16 @@ class lappdInterface :
         self.RegWrite(ADCBUFNUMWORDS,1024)
         print('ROI readout mode', file=sys.stderr)
         
-        self.RegWrite(ADCCHANMASK_0  , self.mask_adc1)
-        self.RegWrite(ADCCHANMASK_0+4, self.mask_adc2)
+        self.RegWrite(ZERSUPSAMP, 0)
+        self.RegSetBit(MODE, C_MODE_ZERSUP_MODE_BIT, 0)
+        self.RegSetBit(MODE, C_MODE_ZERSUP_NEG_BIT, 0)
+        self.RegSetBit(MODE, C_MODE_SENDNULLEVT_BIT, 0)
+        for i in range(2) : 
+          self.RegWrite(ADCCHANMASK_0+i,   self.mask_adc[i])
+          self.RegWrite(ZERSUPMASKOR_0+i,  0xffffffff)
+          self.RegWrite(ZERSUPMASKAND_0+i,  0x0)
 
-        print("ADC1 mask: %s ADC2 mask: %s" % (bin(self.mask_adc1), bin(self.mask_adc2)), file=sys.stderr)
+        print("ADC1 mask: %s ADC2 mask: %s" % (bin(self.mask_adc[0]), bin(self.mask_adc[1])), file=sys.stderr)
 
         t_stop = time.time()
 
